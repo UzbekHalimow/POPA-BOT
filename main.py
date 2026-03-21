@@ -9,7 +9,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import Message
-from prometheus_client import Counter, Gauge, start_http_server
 
 logging.warning("🔧 IMPORTS DONE 🔧")
 
@@ -47,12 +46,6 @@ pending_groups: dict[str, dict] = {}
 flush_tasks: dict[str, asyncio.Task] = {}  # group_id -> task
 
 logging.warning("✅ BOT CREATED")
-
-# Метрики Prometheus
-QUEUE_SIZE_GAUGE = Gauge("bot_queue_size", "Количество постов в очереди на публикацию")
-PUBLISHED_POSTS_COUNTER = Counter("bot_published_posts_total", "Количество опубликованных постов")
-PUBLISH_ERRORS_COUNTER = Counter("bot_publish_errors_total", "Ошибки при публикации постов")
-INCOMING_MESSAGES_COUNTER = Counter("bot_incoming_messages_total", "Обработанные входящие сообщения")
 
 # Проверка доступа
 def is_allowed(user_id: int) -> bool:
@@ -165,18 +158,14 @@ async def scheduled_publisher():
                         count = await cursor.fetchone()
                         count = count[0] if count else 0
 
-                # обновляем метрику размера очереди
-                QUEUE_SIZE_GAUGE.set(count)
                 logging.warning(f"📊 Постов в очереди: {count}")
                 media_list = await get_next_post()
                 if media_list:
                     try:
                         logging.warning(f"📤 Отправка поста с {len(media_list)} медиа...")
                         await send_media_group(media_list)
-                        PUBLISHED_POSTS_COUNTER.inc()
                         logging.warning(f"✅ Опубликован пост с {len(media_list)} медиа")
                     except Exception as e:
-                        PUBLISH_ERRORS_COUNTER.inc()
                         logging.error(f"❌ Ошибка при публикации: {e}", exc_info=True)
                 else:
                     logging.warning("⏸️ Очередь пуста")
@@ -196,7 +185,6 @@ async def scheduled_publisher():
 # Пропускаем сообщения, относящиеся к медиа-группе — они обрабатываются другим хендлером.
 @dp.message(lambda message: (message.photo or message.video or message.animation) and not message.media_group_id)
 async def handle_single_media(message: Message):
-    INCOMING_MESSAGES_COUNTER.inc()
     if not is_allowed(message.from_user.id):
         await message.reply("⛔ Доступ запрещён.")
         return
@@ -222,7 +210,6 @@ async def handle_single_media(message: Message):
 # Обработчик медиа-группы (несколько файлов в одном сообщении)
 @dp.message(lambda message: message.media_group_id is not None)
 async def handle_media_group(message: Message):
-    INCOMING_MESSAGES_COUNTER.inc()
     if not is_allowed(message.from_user.id):
         await message.reply("⛔ Доступ запрещён.")
         return
@@ -342,10 +329,6 @@ async def cmd_testpost(message: Message):
 # Запуск
 async def main():
     logging.warning("🚀 MAIN START 🚀")
-    # стартуем HTTP-сервер метрик Prometheus
-    metrics_port = int(os.getenv("METRICS_PORT", "8000"))
-    logging.warning(f"📈 Запуск Prometheus metrics server на порту {metrics_port}")
-    start_http_server(metrics_port)
     logging.info("Инициализация БД...")
     await init_db()
     logging.warning("📦 DB INIT DONE")
